@@ -9,6 +9,43 @@ An empirical research suite and benchmarking framework investigating whether AMD
 
 ---
 
+## Motivation & Core Philosophy
+
+Modern graphics cards and current-generation consoles (PS5, Xbox Series X/S, RDNA2/3/4, RTX) dedicate significant physical die area to specialized ray tracing hardware. In pure-raster games and esports engines, **this hardware sits 100% idle throughout the entire frame**. Conversely, enabling traditional "full" ray tracing often slashes frame rates by 50% to 70%, forcing aggressive spatial and temporal upscaling.
+
+This research began with a straightforward question of **hardware resource optimization**:
+
+> *Can we repurpose otherwise idle Ray Accelerator silicon to accelerate a standard rasterized frame — either by overlapping compute passes during raster hardware bubbles via async compute, or by replacing expensive, multi-pass raster techniques at equal or superior image quality?*
+
+Rather than treating ray tracing as an all-or-nothing visual luxury, this framework audits where the hardware architecture provides authentic speedups ($O(\text{pixels} \cdot \log(\text{triangles}))$) versus where traditional rasterization, hierarchical Z-buffering (HZB), and on-chip Local Data Share (LDS) remain decisively superior.
+
+---
+
+## Real-World Engine Applications & Practical Insights
+
+### 1. Scaling to Many Dynamic Shadow Casters (Night, Urban & Dungeon Scenes)
+- **The Raster Bottleneck:** In traditional engines, every dynamic shadow-casting light requires re-rasterizing the scene into a shadow map target (cube maps, dual paraboloids, or atlas partitions). Supporting 16 to 64 dynamic casters in a 1M+ triangle scene forces geometry pipelines to process tens of millions of vertices, causing shadow generation alone to consume **13 ms to 54 ms**.
+- **The Ray Query Solution:** Instead of rasterizing $N$ shadow maps, the engine renders a standard G-buffer once and tests shadow visibility inline via ray queries in a tiled deferred compute pass. Testing 16 to 64 dynamic shadow lights costs only **0.18 ms to 0.93 ms** (**up to 132x speedup**), completely eliminating shadow atlas memory allocation, bias tuning, and cascade edge swimming.
+
+### 2. "Free" High-Fidelity Geometric AO via Async Compute Pipeline Packing
+- **The Hardware Bubble:** During early frame rasterization (Depth Prepass, Shadow Maps), shaders write only depth and perform zero texture sampling. On RDNA2, Ray Accelerators share execution datapath and addressing units with the Texture Mapping Units (TMUs). During depth-only passes, the TMUs and Ray Accelerators sit idle.
+- **The Ray Query Solution:** By dispatching a Ray Query Ambient Occlusion (RQAO) pass on a dedicated **Async Compute queue** concurrently with the depth prepass, the workload achieves **94.1% overlap efficiency**. This delivers true world-space contact occlusion essentially for free, raising frame rates by **+52.0% FPS** compared to serialized execution, while avoiding the +6.2% TMU contention penalty incurred if overlapped with a texture-heavy G-buffer.
+
+### 3. Planar Reflections for Open-World Water, Mirrors & Cockpits
+- **The Raster Bottleneck:** Simulating planar mirrors, vehicle rearview mirrors, or water surfaces typically requires an entire second camera render pass with an oblique clipping plane. This duplicates scene draw calls, vertex shading, and culling overhead ($O(\text{triangles})$).
+- **The Ray Query Solution:** Ray Query reflection cost scales strictly with the number of reflective pixels on screen ($O(\text{reflective pixels} \times \log(\text{triangles}))$). For scenes $\ge 500\text{k}$ triangles, Ray Query planar reflections beat a second raster pass across all screen coverage fractions (yielding **12x to 60x speedups** on puddles and vehicle mirrors at 2%–15% screen coverage, and **2.4x to 7.9x speedups** on full-screen mirrors).
+
+### 4. Direct Replacement of Screen-Space Ambient Occlusion (SSAO)
+- **The Screen-Space Flaw:** SSAO / GTAO suffers from haloing around foreground silhouettes, false occlusion under grazing camera angles, and disocclusion voids when occluding geometry exits the camera frustum.
+- **The Ray Query Solution:** At 1 SPP with a bilateral filter, RQAO executes in **0.504 ms** — matching the 0.508 ms cost of 16-sample SSAO — while boosting visual fidelity by **+19.7 dB PSNR**. It provides exact geometric contact shadows and ambient occlusion at zero additional frame budget.
+
+### 5. Architectural Anti-Patterns: Where NOT to Use Ray Accelerators
+- **Do NOT run BVH refits on Async Compute:** In-place BVH refits are memory-bandwidth bound. Running dynamic mesh refits on async compute during graphics passes saturates L2 and Infinity Cache, causing a **-7.3% overlap efficiency penalty** that degrades total frame time.
+- **Do NOT replace Tiled/Clustered LDS Deferred Lighting:** Generating light lists using on-chip 0-cycle LDS registers is **3x to 7x faster** than traversing BVH light hierarchies in global memory.
+- **Do NOT use Ray Queries for Occlusion Culling:** Two-pass Temporal Hierarchical Z-Buffering (HZB) executes in <0.04 ms with 0% visibility popping, whereas multi-ray bounding-box queries suffer **58.6% false-negative leaks** on thin gaps.
+
+---
+
 ## Key Highlights & Findings
 
 For the complete forensic audit, methodology, crossover analyses, and data tables, see [**`REPORT.md`**](REPORT.md).
