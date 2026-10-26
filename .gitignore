@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+bin/
+*.o
+*.a
+*.so
+
+# Shaders compiled / temporary
+*.spv
+
+# Large raw image dumps (keep PNGs and CSVs)
+results/*.raw
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
